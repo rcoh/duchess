@@ -27,7 +27,7 @@ mod upcasts;
 ///
 /// see the tutorial in the [duchess book] for more info.
 ///
-/// [duchess book]: https://nikomatsakis.github.io/duchess/
+/// [duchess book]: https://duchess-rs.github.io/duchess/
 #[proc_macro]
 pub fn java_package(input: TokenStream) -> TokenStream {
     let input: proc_macro2::TokenStream = input.into();

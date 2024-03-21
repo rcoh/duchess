@@ -7,6 +7,7 @@ pub trait AsJRef<U> {
 
 /// Marker type used to indicate an attempt to dereference a null java reference.
 /// See [`TryJDeref`][] trait.
+#[derive(Debug)]
 pub struct NullJRef;
 
 pub type Nullable<T> = Result<T, NullJRef>;

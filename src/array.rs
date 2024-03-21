@@ -1,13 +1,14 @@
 use std::marker::PhantomData;
 
+use crate::java::lang::Object;
 use crate::{
     cast::Upcast,
     java::{self, lang::Class},
     jvm::JavaView,
     plumbing::{FromRef, JavaObjectExt},
     to_java::ToJavaImpl,
-    AsJRef, Error, IntoRust, JDeref, JavaObject, JavaType, Jvm, JvmOp, Local, Nullable,
-    ScalarMethod, TryJDeref,
+    AsJRef, Error, Global, IntoJava, IntoRust, JDeref, JavaObject, JavaType, Jvm, JvmOp, Local,
+    Null, Nullable, ScalarMethod, ToJava, TryJDeref,
 };
 
 pub struct JavaArray<T> {
@@ -127,7 +128,84 @@ where
     }
 }
 
-macro_rules! primivite_array {
+impl JvmOp for &[String] {
+    type Output<'jvm> = Local<'jvm, JavaArray<java::lang::String>>;
+
+    fn execute_with<'jvm>(self, jvm: &mut Jvm<'jvm>) -> crate::Result<'jvm, Self::Output<'jvm>> {
+        let Ok(len) = self.len().try_into() else {
+            return Err(Error::SliceTooLong(self.len()));
+        };
+        let env = jvm.env();
+        let array: Option<Local<JavaArray<java::lang::String>>> = unsafe {
+            // SAFETY: env points to an attached JNI
+            env.invoke(
+                |env| env.NewObjectArray,
+                |env, f| {
+                    f(
+                        env,
+                        len,
+                        java::lang::String::class(jvm).unwrap().as_raw().as_ptr(),
+                        java::lang::Object::new()
+                            .execute_with(jvm)
+                            .unwrap()
+                            .as_raw()
+                            .as_ptr(),
+                    )
+                },
+            )
+        }?;
+        let Some(array) = array else {
+            // NewArray should never return null unless an exception occurred (which we've already checked)
+            return Err(Error::JvmInternal(format!(
+                "failed to allocate `{}[{}]`",
+                "string", len
+            )));
+        };
+
+        unsafe {
+            for idx in 0..len {
+                let local = self[idx as usize]
+                    .to_java()
+                    .execute_with(jvm)?
+                    .expect("how can this be None?");
+                env.invoke(
+                    |env| env.SetObjectArrayElement,
+                    |env, f| f(env, array.as_raw().as_ptr(), idx, local.as_raw().as_ptr()),
+                )?;
+            }
+            // SAFETY: we allocated an array with the same len and type as self
+            /*env.invoke_unchecked(|env| env.OBJectAr, |env, f| f(
+                env,
+                array.as_raw().as_ptr(),
+                0,
+                len,
+                self.as_ptr().cast::<jni_sys::$java_ty>(),
+            ));*/
+        }
+
+        Ok(array)
+    }
+}
+
+impl ToJavaImpl<java::Array<java::lang::String>> for [String] {
+    fn to_java_impl<'jvm>(
+        rust: &Self,
+        jvm: &mut Jvm<'jvm>,
+    ) -> crate::Result<'jvm, Option<Local<'jvm, java::Array<java::lang::String>>>> {
+        Ok(Some(rust.execute_with(jvm)?))
+    }
+}
+
+impl ToJavaImpl<java::Array<java::lang::String>> for Vec<String> {
+    fn to_java_impl<'jvm>(
+        rust: &Self,
+        jvm: &mut Jvm<'jvm>,
+    ) -> crate::Result<'jvm, Option<Local<'jvm, java::Array<java::lang::String>>>> {
+        Ok(Some(rust.execute_with(jvm)?))
+    }
+}
+
+macro_rules! primitive_array {
     ($([$rust:ty]: $java_name:literal $java_ty:ident $new_fn:ident $get_fn:ident $set_fn:ident,)*) => {
         $(
             impl JvmOp for &[$rust] {
@@ -211,7 +289,7 @@ macro_rules! primivite_array {
 }
 
 // Bool is represented as u8 in JNI
-primivite_array! {
+primitive_array! {
     [bool]: "boolean" jboolean NewBooleanArray GetBooleanArrayRegion SetBooleanArrayRegion,
     [i8]: "byte" jbyte NewByteArray GetByteArrayRegion SetByteArrayRegion,
     [u16]: "char" jchar NewCharArray GetCharArrayRegion SetCharArrayRegion,
